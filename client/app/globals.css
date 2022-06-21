@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+/* Palette inspirée de Google Material */
+@theme inline {
+  --color-primary: #1a73e8;
+  --color-primary-hover: #1765cc;
+  --color-primary-soft: #e8f0fe;
+  --color-danger: #d93025;
+  --color-danger-soft: #fce8e6;
+  --color-success: #188038;
+  --color-warning: #f9ab00;
+  --color-ink: #202124;
+  --color-ink-muted: #5f6368;
+  --color-line: #dadce0;
+  --color-surface: #f1f3f4;
+  --font-sans: var(--font-roboto);
+}
+
+body {
+  background: #ffffff;
+  color: var(--color-ink);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
