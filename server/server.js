@@ -8,10 +8,23 @@ const cors = require('cors');
 
 const isProduction = process.env.NODE_ENV === 'production';
 
+// --- Journalisation horodatée à niveaux (sortie standard, captée par l'hébergeur) ---
+const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
+const LOG_LEVEL = LEVELS[process.env.LOG_LEVEL] ?? LEVELS.info;
+
+function log(level, message, meta) {
+  if (LEVELS[level] > LOG_LEVEL) return;
+  const line = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${message}`
+    + (meta ? ` ${JSON.stringify(meta)}` : '');
+  if (level === 'error') console.error(line);
+  else if (level === 'warn') console.warn(line);
+  else console.log(line);
+}
+
 // Origines autorisées, séparées par des virgules (ex. "https://chat.onrender.com").
 // En production, CLIENT_ORIGIN est obligatoire pour ne pas laisser la CORS ouverte à tous.
 if (isProduction && !process.env.CLIENT_ORIGIN) {
-  console.error('[CHAT] CLIENT_ORIGIN est obligatoire en production. Arrêt.');
+  log('error', 'CLIENT_ORIGIN est obligatoire en production. Arrêt.');
   process.exit(1);
 }
 const allowedOrigins = process.env.CLIENT_ORIGIN
@@ -20,12 +33,12 @@ const allowedOrigins = process.env.CLIENT_ORIGIN
 
 // Mot de passe du tableau de bord : obligatoire en production.
 if (isProduction && !process.env.ADMIN_PASSWORD) {
-  console.error('[CHAT] ADMIN_PASSWORD est obligatoire en production. Arrêt.');
+  log('error', 'ADMIN_PASSWORD est obligatoire en production. Arrêt.');
   process.exit(1);
 }
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 if (!process.env.ADMIN_PASSWORD) {
-  console.warn('[CHAT] ADMIN_PASSWORD non défini : mot de passe "admin" (développement uniquement).');
+  log('warn', 'ADMIN_PASSWORD non défini : mot de passe "admin" (développement uniquement).');
 }
 
 const app = express();
@@ -122,9 +135,11 @@ function findPartner(sock) {
     // Informer les deux utilisateurs
     sock.emit('matched', { initiator: true });
     partnerSocket.emit('matched', { initiator: false });
+    log('info', 'Mise en relation', { a: shortId(sock.id), b: shortId(partnerSocket.id) });
   } else {
     waitingQueue.push(sock);
     sock.emit('waiting');
+    log('debug', 'En attente', { id: shortId(sock.id), queue: waitingQueue.length });
   }
   broadcastStats();
 }
@@ -143,11 +158,11 @@ function disconnectPartner(sock) {
 }
 
 io.on('connection', (socket) => {
-  console.log(`Utilisateur connecté: ${socket.id}`);
   socket.watchers = new Set();
   socket.termsAccepted = false;
 
   const clientIp = socket.handshake.address;
+  log('info', 'Connexion', { id: shortId(socket.id), ip: clientIp });
 
   // Acceptation des conditions, vérifiée côté serveur (pas seulement dans le navigateur)
   socket.on('accept-terms', () => {
@@ -158,6 +173,7 @@ io.on('connection', (socket) => {
   socket.on('admin-auth', (password, ack) => {
     const record = adminAuthAttempts.get(clientIp);
     if (record && record.lockedUntil > Date.now()) {
+      log('warn', 'Tentative admin pendant verrou', { ip: clientIp });
       if (typeof ack === 'function') ack({ ok: false, locked: true });
       return;
     }
@@ -168,10 +184,12 @@ io.on('connection', (socket) => {
       socket.isAdmin = true;
       removeFromQueue(socket);
       disconnectPartner(socket);
+      log('info', 'Admin authentifié', { ip: clientIp });
     } else {
       const count = (record?.count || 0) + 1;
       const lockedUntil = count >= MAX_ADMIN_ATTEMPTS ? Date.now() + ADMIN_LOCK_MS : 0;
       adminAuthAttempts.set(clientIp, { count, lockedUntil });
+      log('warn', 'Échec authentification admin', { ip: clientIp, count, locked: lockedUntil > 0 });
     }
 
     if (typeof ack === 'function') ack({ ok });
@@ -222,6 +240,7 @@ io.on('connection', (socket) => {
       at: Date.now()
     });
     reports = reports.slice(0, 50);
+    log('warn', 'Signalement', { reporter: shortId(socket.id), reported: shortId(partner.id) });
     broadcastStats();
   });
 
@@ -234,6 +253,7 @@ io.on('connection', (socket) => {
     if (!target || target.isAdmin) return;
     target.watchers.add(socket.id);
     target.emit('mod-watch-request', { adminId: socket.id });
+    log('info', 'Supervision démarrée', { admin: shortId(socket.id), cible: shortId(targetId) });
     broadcastStats();
   });
 
@@ -256,8 +276,8 @@ io.on('connection', (socket) => {
   });
 
   // --- Déconnexion ---
-  socket.on('disconnect', () => {
-    console.log(`Déconnexion: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    log('info', 'Déconnexion', { id: shortId(socket.id), reason });
     removeFromQueue(socket);
     disconnectPartner(socket);
 
@@ -300,5 +320,13 @@ app.get('/turn-credentials', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Serveur démarré sur le port ${PORT}`);
+  log('info', 'Serveur démarré', {
+    port: Number(PORT),
+    env: isProduction ? 'production' : 'development',
+    cors: Array.isArray(allowedOrigins) ? allowedOrigins : 'ouvert (*)'
+  });
 });
+
+// Journaliser les erreurs non interceptées plutôt que de planter silencieusement
+process.on('uncaughtException', (err) => log('error', 'uncaughtException', { message: err.message }));
+process.on('unhandledRejection', (reason) => log('error', 'unhandledRejection', { reason: String(reason) }));
