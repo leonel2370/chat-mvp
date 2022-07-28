@@ -120,7 +120,6 @@ export default function Home() {
   const [isConnected, setIsConnected] = useState(false);
   const [mediaState, setMediaState] = useState<MediaState>('pending');
   const [mediaError, setMediaError] = useState('');
-  const [watcherCount, setWatcherCount] = useState(0);
   const [reported, setReported] = useState(false);
 
   // Commandes d'appel
@@ -153,7 +152,6 @@ export default function Home() {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
-  const modPeersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const partnerTypingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -316,38 +314,6 @@ export default function Home() {
     }
   }, [closePeerConnection, setupDataChannel, startQualityMonitor, stopQualityMonitor]);
 
-  // Flux à sens unique vers un modérateur qui observe la session
-  const startModStream = useCallback((sock: Socket, adminId: string) => {
-    const localStream = localStreamRef.current;
-    if (!localStream) return;
-
-    const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
-    modPeersRef.current.set(adminId, pc);
-    setWatcherCount(modPeersRef.current.size);
-
-    localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        sock.emit('mod-signal', { targetId: adminId, data: { candidate: event.candidate } });
-      }
-    };
-
-    pc.createOffer()
-      .then((offer) => pc.setLocalDescription(offer))
-      .then(() => sock.emit('mod-signal', { targetId: adminId, data: { sdp: pc.localDescription } }))
-      .catch((e) => console.error('Erreur de supervision :', e));
-  }, []);
-
-  const stopModStream = useCallback((adminId: string) => {
-    const pc = modPeersRef.current.get(adminId);
-    if (pc) {
-      pc.close();
-      modPeersRef.current.delete(adminId);
-      setWatcherCount(modPeersRef.current.size);
-    }
-  }, []);
-
   // Liste des caméras et micros disponibles
   const refreshDevices = useCallback(() => {
     navigator.mediaDevices.enumerateDevices().then((devices) => {
@@ -362,7 +328,6 @@ export default function Home() {
     if (!accepted) return;
 
     let cancelled = false;
-    const modPeers = modPeersRef.current;
 
     // Récupérer les serveurs TURN éphémères auprès du backend
     fetch(`${SOCKET_SERVER_URL}/turn-credentials`)
@@ -459,35 +424,15 @@ export default function Home() {
       }
     });
 
-    newSocket.on('mod-watch-request', ({ adminId }: { adminId: string }) => startModStream(newSocket, adminId));
-    newSocket.on('mod-watch-stop', ({ adminId }: { adminId: string }) => stopModStream(adminId));
-
-    newSocket.on('mod-signal', async ({ from, data }: { from: string; data: SignalData }) => {
-      const pc = modPeersRef.current.get(from);
-      if (!pc) return;
-      try {
-        if (data.sdp) {
-          await pc.setRemoteDescription(data.sdp);
-        } else if (data.candidate) {
-          await pc.addIceCandidate(data.candidate);
-        }
-      } catch (e) {
-        console.error('Erreur de supervision :', e);
-      }
-    });
-
     return () => {
       cancelled = true;
       newSocket.disconnect();
       socketRef.current = null;
       closePeerConnection();
-      modPeers.forEach((pc) => pc.close());
-      modPeers.clear();
-      setWatcherCount(0);
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     };
-  }, [accepted, clearChat, closePeerConnection, createPeerConnection, playNotify, refreshDevices, startModStream, stopModStream]);
+  }, [accepted, clearChat, closePeerConnection, createPeerConnection, playNotify, refreshDevices]);
 
   // Faire défiler le chat vers le bas à chaque nouveau message
   useEffect(() => {
@@ -574,7 +519,6 @@ export default function Home() {
         });
       };
       if (peerConnectionRef.current) applyTo(peerConnectionRef.current);
-      modPeersRef.current.forEach(applyTo);
 
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       localStreamRef.current = newStream;
@@ -677,9 +621,7 @@ export default function Home() {
               <li>You must be 18 or older to use this service.</li>
               <li>Be respectful. Nudity, harassment and illegal content are not allowed.</li>
               <li>
-                Sessions may be monitored by a moderator for safety. A{' '}
-                <span className="font-medium text-ink">&ldquo;Supervised&rdquo;</span> banner appears on
-                your screen whenever a moderator is watching.
+                You can report anyone who breaks these rules. Reported users may be banned.
               </li>
             </ul>
           </div>
@@ -691,10 +633,7 @@ export default function Home() {
               onChange={(e) => setChecked(e.target.checked)}
               className="mt-0.5 h-4 w-4 accent-primary"
             />
-            <span>
-              I am 18 or older and I accept the Terms. I understand sessions may be monitored by a
-              moderator.
-            </span>
+            <span>I am 18 or older and I accept the Terms.</span>
           </label>
 
           <button
@@ -738,13 +677,6 @@ export default function Home() {
           </div>
         </div>
       </header>
-
-      {watcherCount > 0 && (
-        <div className="flex shrink-0 items-center justify-center gap-2 bg-warning/15 py-2 text-sm font-medium text-ink">
-          <Icon path={icons.visibility} className="h-4 w-4" />
-          Supervised — a moderator is watching this session
-        </div>
-      )}
 
       <div className="flex min-h-0 flex-1">
         {/* Scène vidéo */}

@@ -1,15 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 
 const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000';
-
-// STUN de base ; les serveurs TURN éphémères sont récupérés auprès du backend.
-const stunServers: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' }
-];
 
 type Session = {
   aId: string;
@@ -17,7 +11,6 @@ type Session = {
   a: string;
   b: string;
   startedAt: number;
-  watched: boolean;
 };
 
 type Report = {
@@ -36,11 +29,6 @@ type Stats = {
   reports: Report[];
 };
 
-type SignalData = {
-  sdp?: RTCSessionDescriptionInit;
-  candidate?: RTCIceCandidateInit;
-};
-
 const emptyStats: Stats = { online: 0, queue: 0, sessions: [], reports: [] };
 
 function formatDuration(ms: number) {
@@ -50,43 +38,6 @@ function formatDuration(ms: number) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-// Vignette vidéo d'une session supervisée
-function WatchTile({
-  id,
-  stream,
-  onStop
-}: {
-  id: string;
-  stream: MediaStream | null;
-  onStop: (id: string) => void;
-}) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    if (videoRef.current) videoRef.current.srcObject = stream;
-  }, [stream]);
-
-  return (
-    <div className="relative aspect-video overflow-hidden rounded-lg bg-black">
-      <video ref={videoRef} autoPlay playsInline className="absolute inset-0 h-full w-full object-contain" />
-      {!stream && (
-        <div className="absolute inset-0 flex items-center justify-center text-sm text-white/70">
-          Connecting to {id.slice(0, 4)}…
-        </div>
-      )}
-      <span className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-xs font-medium text-white">
-        {id.slice(0, 4)}
-      </span>
-      <button
-        onClick={() => onStop(id)}
-        className="absolute right-2 top-2 rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-ink hover:bg-white"
-      >
-        Stop
-      </button>
-    </div>
-  );
-}
-
 export default function Admin() {
   const [authed, setAuthed] = useState(false);
   const [password, setPassword] = useState('');
@@ -94,12 +45,8 @@ export default function Admin() {
   const [stats, setStats] = useState<Stats>(emptyStats);
   // Horloge courante (0 avant le premier tick, mise à jour chaque seconde)
   const [now, setNow] = useState(0);
-  // Flux observés (participantId -> stream ou null tant qu'il se connecte)
-  const [watched, setWatched] = useState<Record<string, MediaStream | null>>({});
 
   const socketRef = useRef<Socket | null>(null);
-  const modPeersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
-  const iceServersRef = useRef<RTCIceServer[]>(stunServers);
 
   // Horloge pour rafraîchir les durées
   useEffect(() => {
@@ -107,86 +54,15 @@ export default function Admin() {
     return () => clearInterval(t);
   }, []);
 
-  const stopWatch = useCallback((targetId: string) => {
-    socketRef.current?.emit('admin-stop-watch', { targetId });
-    const pc = modPeersRef.current.get(targetId);
-    if (pc) {
-      pc.close();
-      modPeersRef.current.delete(targetId);
-    }
-    setWatched((prev) => {
-      const next = { ...prev };
-      delete next[targetId];
-      return next;
-    });
-  }, []);
-
-  const watch = useCallback((targetId: string) => {
-    if (modPeersRef.current.has(targetId)) return;
-    const sock = socketRef.current;
-    if (!sock) return;
-    setWatched((prev) => ({ ...prev, [targetId]: null }));
-    sock.emit('admin-watch', { targetId });
-  }, []);
-
   useEffect(() => {
     if (!authed) return;
-
     const sock = socketRef.current;
     if (!sock) return;
-    const modPeers = modPeersRef.current;
-
-    // Récupérer les serveurs TURN éphémères pour le visionnage
-    fetch(`${SOCKET_SERVER_URL}/turn-credentials`)
-      .then((r) => r.json())
-      .then((data: { iceServers?: RTCIceServer[] }) => {
-        if (data.iceServers && data.iceServers.length > 0) {
-          iceServersRef.current = [...stunServers, ...data.iceServers];
-        }
-      })
-      .catch(() => {
-        // backend injoignable : STUN seul
-      });
 
     sock.on('admin-stats', (data: Stats) => setStats(data));
 
-    // Le participant observé envoie son offre et ses candidats ICE
-    sock.on('mod-signal', async ({ from, data }: { from: string; data: SignalData }) => {
-      try {
-        let pc = modPeers.get(from);
-        if (!pc) {
-          pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
-          modPeers.set(from, pc);
-          pc.ontrack = (event) => {
-            setWatched((prev) => ({ ...prev, [from]: event.streams[0] }));
-          };
-          pc.onicecandidate = (event) => {
-            if (event.candidate) {
-              sock.emit('mod-signal', { targetId: from, data: { candidate: event.candidate } });
-            }
-          };
-        }
-
-        if (data.sdp) {
-          await pc.setRemoteDescription(data.sdp);
-          if (data.sdp.type === 'offer') {
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            sock.emit('mod-signal', { targetId: from, data: { sdp: pc.localDescription } });
-          }
-        } else if (data.candidate) {
-          await pc.addIceCandidate(data.candidate);
-        }
-      } catch (e) {
-        console.error('Erreur de supervision :', e);
-      }
-    });
-
     return () => {
       sock.off('admin-stats');
-      sock.off('mod-signal');
-      modPeers.forEach((pc) => pc.close());
-      modPeers.clear();
     };
   }, [authed]);
 
@@ -195,11 +71,11 @@ export default function Admin() {
     setAuthError('');
     const sock = io(SOCKET_SERVER_URL);
     socketRef.current = sock;
-    sock.emit('admin-auth', password, (res: { ok: boolean }) => {
+    sock.emit('admin-auth', password, (res: { ok: boolean; locked?: boolean }) => {
       if (res?.ok) {
         setAuthed(true);
       } else {
-        setAuthError('Incorrect password.');
+        setAuthError(res?.locked ? 'Too many attempts. Try again later.' : 'Incorrect password.');
         sock.disconnect();
         socketRef.current = null;
       }
@@ -211,7 +87,7 @@ export default function Admin() {
       <div className="min-h-screen bg-white text-ink flex items-center justify-center px-4">
         <form onSubmit={login} className="w-full max-w-sm rounded-xl border border-line p-8">
           <h1 className="text-xl font-medium">Moderator dashboard</h1>
-          <p className="mt-1 text-sm text-ink-muted">Sign in to supervise live sessions.</p>
+          <p className="mt-1 text-sm text-ink-muted">Sign in to monitor live activity.</p>
           <input
             type="password"
             value={password}
@@ -230,8 +106,6 @@ export default function Admin() {
       </div>
     );
   }
-
-  const watchedIds = Object.keys(watched);
 
   return (
     <div className="min-h-screen bg-white text-ink">
@@ -258,18 +132,6 @@ export default function Admin() {
           ))}
         </section>
 
-        {/* Flux observés */}
-        {watchedIds.length > 0 && (
-          <section>
-            <h2 className="mb-3 text-sm font-medium text-ink-muted">Watching</h2>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {watchedIds.map((id) => (
-                <WatchTile key={id} id={id} stream={watched[id]} onStop={stopWatch} />
-              ))}
-            </div>
-          </section>
-        )}
-
         {/* Sessions en cours */}
         <section>
           <h2 className="mb-3 text-sm font-medium text-ink-muted">Active calls</h2>
@@ -280,29 +142,11 @@ export default function Admin() {
           ) : (
             <div className="divide-y divide-line rounded-xl border border-line">
               {stats.sessions.map((s) => (
-                <div key={s.aId + s.bId} className="flex items-center justify-between gap-4 px-4 py-3">
-                  <div className="text-sm">
-                    <span className="font-medium">
-                      {s.a} ↔ {s.b}
-                    </span>
-                    {s.watched && (
-                      <span className="ml-2 rounded-full bg-warning/20 px-2 py-0.5 text-xs text-ink">
-                        supervised
-                      </span>
-                    )}
-                    <span className="ml-2 text-ink-muted">{formatDuration(now - s.startedAt)}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    {[s.aId, s.bId].map((id) => (
-                      <button
-                        key={id}
-                        onClick={() => (watched[id] !== undefined ? stopWatch(id) : watch(id))}
-                        className="rounded-full border border-line px-3 py-1 text-xs font-medium text-primary hover:bg-primary-soft"
-                      >
-                        {watched[id] !== undefined ? `Stop ${id.slice(0, 4)}` : `Watch ${id.slice(0, 4)}`}
-                      </button>
-                    ))}
-                  </div>
+                <div key={s.aId + s.bId} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
+                  <span className="font-medium">
+                    {s.a} ↔ {s.b}
+                  </span>
+                  <span className="text-ink-muted">{formatDuration(now - s.startedAt)}</span>
                 </div>
               ))}
             </div>
@@ -319,21 +163,11 @@ export default function Admin() {
           ) : (
             <div className="divide-y divide-line rounded-xl border border-line">
               {stats.reports.map((r) => (
-                <div key={r.id} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
-                  <div>
-                    <span className="font-medium text-danger">{r.reported}</span>
-                    <span className="text-ink-muted"> reported by {r.reporter}</span>
-                    {r.reason && <span className="text-ink-muted"> — {r.reason}</span>}
-                    <span className="ml-2 text-ink-muted">
-                      {new Date(r.at).toLocaleTimeString()}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => (watched[r.reportedId] !== undefined ? stopWatch(r.reportedId) : watch(r.reportedId))}
-                    className="rounded-full border border-line px-3 py-1 text-xs font-medium text-primary hover:bg-primary-soft"
-                  >
-                    {watched[r.reportedId] !== undefined ? 'Stop' : 'Watch'}
-                  </button>
+                <div key={r.id} className="px-4 py-3 text-sm">
+                  <span className="font-medium text-danger">{r.reported}</span>
+                  <span className="text-ink-muted"> reported by {r.reporter}</span>
+                  {r.reason && <span className="text-ink-muted"> — {r.reason}</span>}
+                  <span className="ml-2 text-ink-muted">{new Date(r.at).toLocaleTimeString()}</span>
                 </div>
               ))}
             </div>

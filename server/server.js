@@ -87,14 +87,12 @@ function getState() {
     if (s.partner && !seen.has(s.id) && !seen.has(s.partner.id)) {
       seen.add(s.id);
       seen.add(s.partner.id);
-      const watchers = (s.watchers?.size || 0) + (s.partner.watchers?.size || 0);
       sessions.push({
         aId: s.id,
         bId: s.partner.id,
         a: shortId(s.id),
         b: shortId(s.partner.id),
-        startedAt: s.sessionStartedAt || Date.now(),
-        watched: watchers > 0
+        startedAt: s.sessionStartedAt || Date.now()
       });
     }
   }
@@ -158,7 +156,6 @@ function disconnectPartner(sock) {
 }
 
 io.on('connection', (socket) => {
-  socket.watchers = new Set();
   socket.termsAccepted = false;
 
   const clientIp = socket.handshake.address;
@@ -244,51 +241,11 @@ io.on('connection', (socket) => {
     broadcastStats();
   });
 
-  // --- Supervision : un modérateur demande à voir une session ---
-  // Le participant observé crée alors un flux à sens unique vers le modérateur
-  // et affiche le bandeau « Supervised ». Rien n'est transmis à son insu.
-  socket.on('admin-watch', ({ targetId }) => {
-    if (!socket.isAdmin) return;
-    const target = io.sockets.sockets.get(targetId);
-    if (!target || target.isAdmin) return;
-    target.watchers.add(socket.id);
-    target.emit('mod-watch-request', { adminId: socket.id });
-    log('info', 'Supervision démarrée', { admin: shortId(socket.id), cible: shortId(targetId) });
-    broadcastStats();
-  });
-
-  socket.on('admin-stop-watch', ({ targetId }) => {
-    if (!socket.isAdmin) return;
-    const target = io.sockets.sockets.get(targetId);
-    if (!target) return;
-    target.watchers.delete(socket.id);
-    target.emit('mod-watch-stop', { adminId: socket.id });
-    broadcastStats();
-  });
-
-  // Signalisation WebRTC dédiée au visionnage de supervision
-  socket.on('mod-signal', ({ targetId, data }) => {
-    const target = io.sockets.sockets.get(targetId);
-    if (!target) return;
-    // Un participant ne peut parler qu'à un modérateur qui l'observe
-    if (!socket.isAdmin && !socket.watchers.has(targetId)) return;
-    target.emit('mod-signal', { from: socket.id, data });
-  });
-
   // --- Déconnexion ---
   socket.on('disconnect', (reason) => {
     log('info', 'Déconnexion', { id: shortId(socket.id), reason });
     removeFromQueue(socket);
     disconnectPartner(socket);
-
-    if (socket.isAdmin) {
-      // Prévenir les participants que ce modérateur ne regarde plus
-      for (const s of io.sockets.sockets.values()) {
-        if (s.watchers.delete(socket.id)) {
-          s.emit('mod-watch-stop', { adminId: socket.id });
-        }
-      }
-    }
     broadcastStats();
   });
 });
