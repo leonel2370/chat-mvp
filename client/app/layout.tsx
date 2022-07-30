@@ -16,20 +16,37 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://chat.example.com";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "CHAT — Random video chat",
+    default: "CHAT — Free video chat to meet people",
     template: "%s · CHAT",
   },
   description:
-    "CHAT connects you instantly with random people around the world over live video. One click to meet someone new.",
+    "Free random video chat to meet new people and talk with strangers worldwide. Instant one-click video dating and exchange — no sign-up. Omegle and ChatMate alternative.",
   applicationName: "CHAT",
   keywords: [
+    "free video chat",
     "random video chat",
-    "video chat",
-    "talk to strangers",
+    "video chat with strangers",
     "meet new people",
+    "online dating video chat",
+    "cam chat",
     "webcam chat",
-    "live video",
+    "talk to strangers",
     "omegle alternative",
+    "chatmate alternative",
+    // Marchés ciblés
+    "video chat Philippines",
+    "video chat USA",
+    "video chat China",
+    "video chat India",
+    "video chat Bangladesh",
+    "video chat South Africa",
+    "video chat France",
+    "chat video France gratuit",
+    "video chat Arab",
+    "Arabic video chat",
+    "دردشة فيديو عشوائية",
+    "شات فيديو مجاني",
+    "دردشة مع غرباء",
   ],
   authors: [{ name: "CHAT" }],
   category: "social",
@@ -40,10 +57,11 @@ export const metadata: Metadata = {
     type: "website",
     url: siteUrl,
     siteName: "CHAT",
-    title: "CHAT — Random video chat",
+    title: "CHAT — Free video chat to meet people",
     description:
-      "Meet random people over live video. One click to start a conversation.",
+      "Free random video chat to meet new people worldwide. One click, no sign-up.",
     locale: "en_US",
+    alternateLocale: ["fr_FR", "ar_SA", "zh_CN", "hi_IN", "bn_BD"],
     images: [
       {
         url: "/og.png",
@@ -55,9 +73,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "CHAT — Random video chat",
+    title: "CHAT — Free video chat to meet people",
     description:
-      "Meet random people over live video. One click to start a conversation.",
+      "Free random video chat to meet new people worldwide. One click, no sign-up.",
     images: ["/og.png"],
   },
   robots: {

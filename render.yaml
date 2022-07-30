@@ -1,0 +1,52 @@
+# Render Blueprint — déploie les deux services depuis ce dépôt unique.
+# Les secrets (mots de passe, URLs) ne sont PAS dans ce fichier : ils se saisissent
+# dans le tableau de bord Render (champs marqués sync: false).
+services:
+  # --- Backend : serveur de signalisation Socket.io ---
+  - type: web
+    name: chatmate-backend
+    env: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      # Obligatoire en production (le serveur refuse de démarrer sans).
+      - key: ADMIN_PASSWORD
+        sync: false
+      # URL exacte du frontend, à renseigner après son déploiement (CORS).
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: LOG_LEVEL
+        value: info
+      # TURN éphémère (optionnel : fiabilité des connexions).
+      - key: TURN_SECRET
+        sync: false
+      - key: TURN_URLS
+        sync: false
+
+  # --- Frontend : application Next.js ---
+  - type: web
+    name: chatmate-frontend
+    env: node
+    rootDir: client
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      # URL du backend ci-dessus (figée à la compilation : NEXT_PUBLIC_*).
+      - key: NEXT_PUBLIC_SOCKET_URL
+        sync: false
+      # URL publique de ce frontend (SEO, partage social).
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+      # Zones publicitaires ExoClick (identifiants publics, optionnels).
+      - key: NEXT_PUBLIC_EXOCLICK_ZONE_TERMS
+        sync: false
+      - key: NEXT_PUBLIC_EXOCLICK_ZONE_LOBBY
+        sync: false
+      - key: NEXT_PUBLIC_EXOCLICK_ZONE_INTERSTITIAL
+        sync: false
+      - key: NEXT_PUBLIC_EXOCLICK_ZONE_FOOTER
+        sync: false

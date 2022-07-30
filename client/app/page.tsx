@@ -633,7 +633,11 @@ export default function Home() {
               onChange={(e) => setChecked(e.target.checked)}
               className="mt-0.5 h-4 w-4 accent-primary"
             />
-            <span>I am 18 or older and I accept the Terms.</span>
+            <span>
+              I am 18 or older and I accept the{' '}
+              <a href="/terms" target="_blank" className="text-primary underline">Terms</a> and{' '}
+              <a href="/privacy" target="_blank" className="text-primary underline">Privacy Policy</a>.
+            </span>
           </label>
 
           <button
@@ -645,6 +649,12 @@ export default function Home() {
           </button>
 
           <AdSlot zoneId={adZones.terms} className="mt-6 flex justify-center" />
+
+          <p className="mt-6 text-xs text-ink-muted">
+            <a href="/terms" className="hover:text-ink">Terms</a>
+            <span className="mx-2">·</span>
+            <a href="/privacy" className="hover:text-ink">Privacy</a>
+          </p>
         </div>
       </div>
     );
